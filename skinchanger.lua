@@ -1789,7 +1789,7 @@ function K.selectSub(tab, index, instant, animatePage)
 		K.showPage(tab.subs[index].page, skip, index >= previous and 18 or -18)
 		if K.reflow then K.reflow(tab.subs[index]) end
 		K.markSub(tab, skip)
-		if not skip then SFX.click() end
+		if not skip and not animatePage then SFX.click() end
 	end
 	if K.closeAll then K.closeAll() end
 end
@@ -2086,13 +2086,32 @@ connectUI(root:GetPropertyChangedSignal("AbsoluteSize"), function()
 	if current and K.reflow then K.reflow(current.subs[current.active or 1]) end
 	if current then K.markTab(current, true); K.markSub(current, true) end
 end)
-connectUI(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), function()
-	if MOBILE then
-		baseScale = math.clamp(K.view().Y / 410, 0.62, 1)
-		scaler.Scale = baseScale
+do
+	-- the camera can be swapped out; follow the new one's viewport
+	local viewportConn
+	local function onViewport()
+		if MOBILE then
+			baseScale = math.clamp(K.view().Y / 410, 0.62, 1)
+			scaler.Scale = baseScale
+			for _, o in ipairs(followScale) do o.Scale = baseScale * (o:GetAttribute("Follow") or 0.92) end
+		end
+		K.fitRoot()
 	end
-	K.fitRoot()
-end)
+	local function watchCamera()
+		if viewportConn then
+			viewportConn:Disconnect()
+			uiConnections[viewportConn] = nil
+			viewportConn = nil
+		end
+		local camera = workspace.CurrentCamera
+		if camera then viewportConn = connectUI(camera:GetPropertyChangedSignal("ViewportSize"), onViewport) end
+	end
+	watchCamera()
+	connectUI(workspace:GetPropertyChangedSignal("CurrentCamera"), function()
+		watchCamera()
+		if workspace.CurrentCamera then onViewport() end
+	end)
+end
 
 -- ------------------------------------------------------------------ toasts --
 -- Short lines at the bottom middle of the screen: a dark capsule, a dot and
@@ -2640,7 +2659,7 @@ local function arrange(row, quiet)
 		tinted[body] = true
 		if not quiet then
 			for _, other in ipairs(body:GetChildren()) do
-				if other ~= row and other.Name == "Row" then arrange(other, true) end
+				if other ~= row and other.Name == "Row" and other:FindFirstChild("Box") then arrange(other, true) end
 			end
 		end
 	end
@@ -4108,6 +4127,10 @@ function K.addCard(sub, frame, want, body, fixed)
 end
 
 -- the rows of a freshly shown page come up one after another
+-- A label's resting look is kept while its fade-in runs: a page shown again
+-- before the last fade finished must not take the half-faded (or hidden)
+-- value as where to land, or its labels stay invisible.
+local resting = setmetatable({}, { __mode = "k" })
 function K.stagger(page)
 	LPH_ATTRIBUTES(VM(NONE))
 	local n = 0
@@ -4115,10 +4138,17 @@ function K.stagger(page)
 		if n >= 22 then break end
 		if d.Name == "Label" and d:IsA("TextLabel") and d.Parent and d.Parent.Name == "Row" then
 			n += 1
-			local goal = d.TextTransparency
+			local goal = resting[d]
+			if goal == nil then
+				goal = d.TextTransparency
+				resting[d] = goal
+			end
 			d.TextTransparency = 1
 			task.delay(0.02 * n, function()
-				if d.Parent then tween(d, 0.3, { TextTransparency = goal }) end
+				if not d.Parent then return end
+				tween(d, 0.3, { TextTransparency = goal }).Completed:Once(function(state)
+					if state == Enum.PlaybackState.Completed and resting[d] == goal then resting[d] = nil end
+				end)
 			end)
 		end
 	end
