@@ -3664,72 +3664,6 @@ function Section:label(text)
 	}
 end
 
--- A function's extra settings: three dots at the end of its row open them
--- in the sheet on the right. The body waits in the attic until then.
-function Section:options(row, name, title)
-	local inHeader = self.tools ~= nil and row == self.header
-	local gear = new("ImageButton", {
-		Name = "Gear",
-		AnchorPoint = Vector2.new(1, 0.5),
-		Size = UDim2.fromOffset(20, 20),
-		BackgroundTransparency = 1,
-		AutoButtonColor = false,
-		Image = "",
-		LayoutOrder = 7,
-		ZIndex = 5,
-	}, inHeader and self.tools or row)
-	local icon = K.glyph(gear, "adjustments-horizontal", 16, C.faint, {
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		ZIndex = 6,
-	})
-	if not inHeader then arrange(row) end
-	gear.MouseEnter:Connect(function() tween(icon, 0.15, { ImageColor3 = C.text }) end)
-	gear.MouseLeave:Connect(function()
-		tween(icon, 0.2, { ImageColor3 = gear:GetAttribute("Open") and C.text or C.faint })
-	end)
-
-	local body = new("Frame", {
-		Name = "Options",
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-	}, K.attic)
-	pad(body, 10, 18, 20, 20)
-	new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, MOBILE and 2 or 1) }, body)
-
-	local function reveal()
-		if self.revealOptions and not K.sheetOpen(self.body) then self.revealOptions() end
-		gear:SetAttribute("Open", true)
-		tween(icon, 0.2, { ImageColor3 = C.text })
-		K.openSheet(nice(title or name), body, {
-			replace = not self.inSheet,
-			owner = gear,
-			onClose = function()
-				gear:SetAttribute("Open", false)
-				tween(icon, 0.2, { ImageColor3 = C.faint })
-			end,
-		})
-	end
-	gear.MouseButton1Click:Connect(function()
-		if K.sheetOpen(body) then K.closeSheets(true); return end
-		SFX.click()
-		reveal()
-	end)
-
-	return setmetatable({
-		body = body,
-		head = self.head,
-		card = self.card,
-		tab = self.tab,
-		sub = self.sub,
-		inSheet = true,
-		revealOptions = reveal,
-		path = self.path .. "/" .. name,
-		where = self.where .. " / " .. nice(title or name),
-	}, Section)
-end
-
 -- a click outside closes a floating list (the sheet has its own scrim)
 connectUI(UIS.InputBegan, function(input)
 	if not K.isPress(input) then return end
@@ -4807,6 +4741,239 @@ function UI.gallery(tabName, subName, columnIndex, cfg)
 	return api
 end
 
+-- You, standing on a dark stage, wearing what the character card paints.
+-- Drag to turn (a flick keeps it turning), wheel to come closer. Before the
+-- character spawns the stage says so instead of standing empty.
+function UI.preview(tabName, subName, columnIndex, cfg)
+	LPH_ATTRIBUTES(VM(NONE))
+	local tab, sub = findSub(tabName, subName)
+	local frame, _, _, body, tools = card(columnOf(sub, columnIndex), cfg.Name or "preview")
+	pad(body, 2, 0, 0, 0)
+	local previewHeight = math.floor((tonumber(cfg.Height) or 250) * (MOBILE and 0.8 or 1.05))
+	tab.cards = (tab.cards or 0) + 1
+	K.addCard(sub, frame, columnIndex, nil, previewHeight + 12)
+	local folded = false
+	local stage = new("Frame", {
+		Size = UDim2.new(1, 0, 0, previewHeight),
+		BackgroundColor3 = C.window,
+		ClipsDescendants = true,
+	}, body)
+	corner(stage, 10)
+	if K.art.glow then
+		new("ImageLabel", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.42),
+			Size = UDim2.fromScale(1.3, 1.1),
+			BackgroundTransparency = 1,
+			Image = K.art.glow,
+			ImageColor3 = C.white,
+			ImageTransparency = 0.94,
+		}, stage)
+		new("ImageLabel", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.89),
+			Size = UDim2.new(0.5, 0, 0, 22),
+			BackgroundTransparency = 1,
+			Image = K.art.glow,
+			ImageColor3 = C.void,
+			ImageTransparency = 0.2,
+		}, stage)
+	end
+	-- a faint floor line the figure stands on
+	new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromScale(0.5, 0.885),
+		Size = UDim2.new(0.7, 0, 0, 1),
+		BackgroundColor3 = C.border,
+		BorderSizePixel = 0,
+	}, stage).ZIndex = 1
+	local vp = new("ViewportFrame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Ambient = Color3.fromRGB(160, 160, 166),
+		LightColor = Color3.fromRGB(255, 255, 255),
+		LightDirection = Vector3.new(-0.4, -1, -0.6),
+		Active = true,
+		ClipsDescendants = true,
+		ZIndex = 2,
+	}, stage)
+	local waiting = K.text(stage, {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.new(1, -40, 0, 20),
+		Text = cfg.Waiting or "Spawn in to see your character",
+		TextColor3 = C.faint,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		ZIndex = 3,
+	})
+	local world = new("WorldModel", {}, vp)
+	local cam = new("Camera", { FieldOfView = 32 }, vp)
+	K.wheelBlockers[vp] = true
+	vp.CurrentCamera = cam
+	local item = { viewport = vp, parts = {}, active = false }
+	local renders, model = {}, nil
+	local yaw, zoom, dragging, lastX, finger = math.pi, 1, false, nil, nil
+	local spin = 0
+	local center, extents = Vector3.zero, Vector3.new(3, 6, 2)
+	local bodyNames = {
+		Head = true, Torso = true, ["Left Arm"] = true, ["Right Arm"] = true, ["Left Leg"] = true, ["Right Leg"] = true,
+		UpperTorso = true, LowerTorso = true,
+		LeftUpperArm = true, LeftLowerArm = true, LeftHand = true, RightUpperArm = true, RightLowerArm = true, RightHand = true,
+		LeftUpperLeg = true, LeftLowerLeg = true, LeftFoot = true, RightUpperLeg = true, RightLowerLeg = true, RightFoot = true,
+	}
+	local buildPending, buildQueued = true, false
+	local function visible()
+		return root.Visible and sub.page.Visible and sub.page.Parent == K.content and frame.Visible and not folded
+	end
+	local function aim()
+		if not visible() then return end
+		local size = vp.AbsoluteSize
+		if size.X < 2 or size.Y < 2 then return end
+		local half = math.tan(math.rad(cam.FieldOfView) / 2)
+		local aspect = size.X / size.Y
+		local fit = math.max(extents.Y / 2 / half, math.max(extents.X, extents.Z) / 2 / (half * aspect))
+		local distance = math.max(4, (fit * 1.24 + extents.Z / 2) * zoom)
+		local target = center + Vector3.new(0, extents.Y * 0.02, 0)
+		cam.CFrame = CFrame.lookAt(target + Vector3.new(math.sin(yaw), 0.12, math.cos(yaw)).Unit * distance, target)
+	end
+
+	local function build()
+		buildPending = true
+		if not visible() then return end
+		local char = LP.Character
+		if not char or not frame.Parent then return end
+		local was = char.Archivable
+		char.Archivable = true
+		local ok, copy = pcall(function() return char:Clone() end)
+		char.Archivable = was
+		if not ok or not copy then return end
+		for _, d in ipairs(copy:GetDescendants()) do
+			if d:IsA("LuaSourceContainer") or d:IsA("Sound") or d:IsA("ForceField") or d:IsA("Clouds") then d:Destroy() end
+		end
+		table.clear(item.parts)
+		for _, d in ipairs(copy:GetDescendants()) do
+			if d:IsA("BasePart") then
+				d.Anchored = true
+				item.parts[#item.parts + 1] = d
+			end
+		end
+		copy:PivotTo(CFrame.new(0, 0, 0))
+		if LP.Character ~= char then copy:Destroy() return end
+		if model then model:Destroy() end
+		copy.Parent = world
+		model = copy
+		waiting.Visible = false
+		buildPending = false
+		local lo, hi
+		for _, part in ipairs(copy:GetChildren()) do
+			if part:IsA("BasePart") and bodyNames[part.Name] then
+				local half = part.Size / 2
+				for _, x in ipairs({ -1, 1 }) do for _, y in ipairs({ -1, 1 }) do for _, z in ipairs({ -1, 1 }) do
+					local p = part.CFrame:PointToWorldSpace(Vector3.new(half.X * x, half.Y * y, half.Z * z))
+					lo = lo and Vector3.new(math.min(lo.X, p.X), math.min(lo.Y, p.Y), math.min(lo.Z, p.Z)) or p
+					hi = hi and Vector3.new(math.max(hi.X, p.X), math.max(hi.Y, p.Y), math.max(hi.Z, p.Z)) or p
+				end end end
+			end
+		end
+		if lo and hi then center, extents = (lo + hi) / 2, hi - lo end
+		aim()
+		if cfg.Callback then task.spawn(cfg.Callback, model, item) end
+	end
+	local function queueBuild()
+		if not visible() then return end
+		if not buildPending then aim() return end
+		if buildQueued then return end
+		buildQueued = true
+		task.defer(function()
+			buildQueued = false
+			if frame.Parent then build() end
+		end)
+	end
+	connectUI(LP.CharacterAdded, function() task.delay(1, build) end, frame)
+	connectUI(LP.CharacterRemoving, function()
+		if model then model:Destroy() model = nil end
+		table.clear(item.parts)
+		waiting.Visible = true
+		buildPending = true
+	end, frame)
+	connectUI(root:GetPropertyChangedSignal("Visible"), queueBuild, frame)
+	connectUI(sub.page:GetPropertyChangedSignal("Visible"), queueBuild, frame)
+	connectUI(sub.page.AncestryChanged, queueBuild, frame)
+	connectUI(frame:GetPropertyChangedSignal("Visible"), queueBuild, frame)
+	queueBuild()
+	local refresh, refreshIcon = K.iconButton(tools, "refresh", 22, { LayoutOrder = 1 })
+	local fold, foldIcon = K.iconButton(tools, "chevron-down", 22, { LayoutOrder = 2 })
+	connectUI(refresh.MouseButton1Click, function()
+		SFX.click()
+		refreshIcon.Rotation = 0
+		tween(refreshIcon, 0.5, { Rotation = 360 }, K.ease.out)
+		task.defer(build)
+	end, frame)
+	connectUI(fold.MouseButton1Click, function()
+		folded = not folded
+		SFX.click()
+		if not folded then stage.Visible = true end
+		if not folded then queueBuild() end
+		tween(stage, 0.35, { Size = UDim2.new(1, 0, 0, folded and 0 or previewHeight) }, K.ease.out)
+		tween(foldIcon, 0.35, { Rotation = folded and -90 or 0 }, K.ease.out)
+		if folded then task.delay(0.35, function() if folded and stage.Parent then stage.Visible = false end end) end
+	end, frame)
+	connectUI(vp.InputBegan, function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging, lastX = true, input.Position.X
+			finger = input.UserInputType == Enum.UserInputType.Touch and input or nil
+		end
+	end, frame)
+	connectUI(vp.InputChanged, function(input)
+		if input.UserInputType == Enum.UserInputType.MouseWheel then
+			zoom = math.clamp(zoom * (input.Position.Z > 0 and 0.88 or 1.14), 0.45, 2.4)
+			aim()
+		end
+	end, frame)
+	connectUI(vp:GetPropertyChangedSignal("AbsoluteSize"), aim, frame)
+	connectUI(UIS.InputChanged, function(input)
+		if not dragging or not root.Visible then return end
+		if (finger and input == finger) or (not finger and input.UserInputType == Enum.UserInputType.MouseMovement) then
+			local dx = input.Position.X - (lastX or input.Position.X)
+			lastX = input.Position.X
+			spin = -dx * 0.012
+			yaw += spin
+			aim()
+		end
+	end, frame)
+	connectUI(UIS.InputEnded, function(input)
+		if (finger and input == finger) or (not finger and input.UserInputType == Enum.UserInputType.MouseButton1) then
+			dragging, finger = false, nil
+		end
+	end, frame)
+	connectUI(root:GetPropertyChangedSignal("Visible"), function()
+		if not root.Visible then dragging, finger = false, nil end
+	end, frame)
+
+	local ticker
+	ticker = connectUI(game:GetService("RunService").RenderStepped, function(dt)
+		if not frame.Parent then ticker:Disconnect() return end
+		local wasActive = item.active
+		item.active = visible()
+		if item.active and not dragging and math.abs(spin) > 0.0005 then
+			yaw += spin
+			spin *= math.exp(-dt * 4)
+			aim()
+		end
+		if item.active or wasActive then
+			for _, fn in ipairs(renders) do pcall(fn, item) end
+		end
+	end, frame)
+
+	return {
+		viewport = vp,
+		item = item,
+		model = function() return model end,
+		onrender = function(_, fn) renders[#renders + 1] = fn end,
+		refresh = build,
+	}
+end
+
 -- -------------------------------------------------------------- favourites --
 K.fav = { section = nil, gallery = nil, built = {} }
 
@@ -4933,6 +5100,8 @@ end
 
 -- ------------------------------------------------------------------ configs --
 local currentConfig = "config"
+-- key -> { save = fn() -> json-able, load = fn(value) }; restored after the store
+K.persist = {}
 
 function K.listConfigs()
 	local names = {}
@@ -4961,8 +5130,16 @@ function K.snapshot()
 			if control.isToggle and control.bindMode == "hold" then modes[path] = "hold" end
 		end
 	end
+	-- pieces that live outside the rows and the store (the skin choices)
+	local extra = {}
+	for key, piece in pairs(K.persist) do
+		local ok, value = pcall(piece.save)
+		if ok and value ~= nil then extra[key] = value end
+	end
 	return HttpService:JSONEncode({
+		version = 2,
 		store = K.extraSave and K.extraSave() or nil,
+		extra = extra,
 		values = values,
 		binds = keys,
 		bindModes = modes,
@@ -4995,6 +5172,13 @@ function K.applyConfig(data)
 		end
 	end
 	if K.extraLoad and data.store ~= nil then pcall(K.extraLoad, data.store) end
+	local extra = type(data.extra) == "table" and data.extra or {}
+	for key, piece in pairs(K.persist) do
+		if extra[key] ~= nil then
+			local ok, err = pcall(piece.load, extra[key])
+			if not ok then warn("[Salad] config: " .. key .. ": " .. tostring(err)) end
+		end
+	end
 	for _, tab in ipairs(tabs) do
 		local index = type(data.subs) == "table" and tonumber(data.subs[tab.name])
 		if index and tab.subs[index] then tab.active = index end
@@ -5014,10 +5198,35 @@ function K.remember(name)
 	if K.paintStatus then K.paintStatus() end
 end
 
+-- menu-wide choices that are not part of any config: whether the current
+-- config saves itself and whether the last one loads on start
+K.prefs = { autoSave = true, autoLoad = true }
+pcall(function()
+	local saved = HttpService:JSONDecode(readfile(ROOT .. "/prefs.json"))
+	if type(saved) == "table" then
+		if type(saved.autoSave) == "boolean" then K.prefs.autoSave = saved.autoSave end
+		if type(saved.autoLoad) == "boolean" then K.prefs.autoLoad = saved.autoLoad end
+	end
+end)
+function K.setPref(key, value)
+	K.prefs[key] = value
+	K.ensureFolders()
+	pcall(writefile, ROOT .. "/prefs.json", HttpService:JSONEncode(K.prefs))
+end
+
+local lastWritten
 function K.saveConfig(name)
 	K.ensureFolders()
-	local ok = pcall(function() writefile(K.CONFIG_DIR .. "/" .. name .. K.CONFIG_EXT, K.snapshot()) end)
-	if ok then K.remember(name) end
+	local ok, text = pcall(K.snapshot)
+	if not ok or type(text) ~= "string" then
+		warn("[Salad] config: snapshot failed: " .. tostring(text))
+		return false
+	end
+	ok = pcall(writefile, K.CONFIG_DIR .. "/" .. name .. K.CONFIG_EXT, text)
+	if ok then
+		lastWritten = text
+		K.remember(name)
+	end
 	return ok
 end
 
@@ -5027,9 +5236,36 @@ local function loadConfig(name)
 	end)
 	if not ok or type(data) ~= "table" then return false end
 	K.remember(name)
-	K.applyConfig(data)
+	K.loading = true
+	local applied, err = pcall(K.applyConfig, data)
+	K.loading = false
+	if not applied then warn("[Salad] config: " .. tostring(err)) end
+	-- what was just loaded is what is on disk: no save right after a load
+	local fresh, text = pcall(K.snapshot)
+	if fresh then lastWritten = text end
 	return true
 end
+
+-- The current config keeps itself up to date: when the menu closes, when
+-- the script unloads, and every few seconds while something has changed.
+-- Nothing is written when nothing changed.
+function K.autoSave()
+	if not K.prefs.autoSave or K.loading or not K.booted then return end
+	local ok, text = pcall(K.snapshot)
+	if not ok or text == lastWritten then return end
+	K.ensureFolders()
+	if pcall(writefile, K.CONFIG_DIR .. "/" .. currentConfig .. K.CONFIG_EXT, text) then
+		lastWritten = text
+		pcall(writefile, ROOT .. "/last.txt", currentConfig)
+	end
+end
+task.spawn(function()
+	while not K.unloaded do
+		task.wait(10)
+		if K.unloaded then break end
+		pcall(K.autoSave)
+	end
+end)
 UI.save = K.saveConfig
 UI.load = loadConfig
 K.currentConfig = function() return currentConfig end
@@ -5310,8 +5546,6 @@ do
 	local function goTo(entry)
 		selectTab(entry.tab, false, entry.sub)
 		K.closeSearch()
-		local section = entry.section
-		if section and section.revealOptions then section.revealOptions() end
 		local target = entry.target or entry.card
 		if not target then return end
 		task.delay(0.35, function()
@@ -5610,11 +5844,13 @@ local function setOpen(open, quiet)
 	if not quiet then
 		if open then SFX.on() else SFX.off() end
 	end
+	if not open then task.defer(function() pcall(K.autoSave) end) end
 end
 K.closeButton.MouseButton1Click:Connect(function() setOpen(false) end)
 
 function K.unload()
 	if K.unloaded or env.__SaladGui ~= gui then return end
+	if K.autoSave then pcall(K.autoSave) end
 	K.unloaded = true
 	local sounds = env.__SaladSounds
 	K.motion = (K.motion or 0) + 1
@@ -5921,6 +6157,13 @@ local function initThemes()
 		K.freeMouseEnabled = v
 		K.freeMouse(isOpen)
 	end)
+	sec:toggle("Auto Save Config", K.prefs.autoSave, function(v) K.setPref("autoSave", v) end)
+	sec:toggle("Auto Load Last Config", K.prefs.autoLoad, function(v) K.setPref("autoLoad", v) end)
+	-- these two are about configs, not part of one
+	for _, label in ipairs({ "Auto Save Config", "Auto Load Last Config" }) do
+		local item = registry["Settings/Menu/Menu/" .. label]
+		if item then item.secret = true end
+	end
 	sec:slider("Window Opacity", 70, 100, 100, function(v)
 		K.main.BackgroundTransparency = 1 - v / 100
 	end, "%", 1)
@@ -6393,7 +6636,7 @@ function K.boot()
 	local ok, name = pcall(readfile, ROOT .. "/last.txt")
 	if ok and type(name) == "string" and name ~= "" then
 		currentConfig = name
-		loadConfig(name)
+		if K.prefs.autoLoad then loadConfig(name) end
 	end
 	pcall(loadFavs)
 	pcall(rebuildFavs)
@@ -7454,19 +7697,18 @@ UI.kicia = (function()
 		end
 	end
 
-	-- A group: a switch's extra settings open from the gear on its row; a
-	-- choice's settings sit under it and show while the choice matches.
+	-- A group: a switch's extra settings sit right under it in the card,
+	-- always open; a choice's settings sit under it and show while the
+	-- choice matches.
 	function Container:AddGroup(opts)
 		local source = opts.Source
 		if source and source.Kind == "toggle" and opts.Option == nil then
-			if not source.sheet then
-				local hs = self.hs
-				local sheet = hs:options(source.Row, source.label or "Options", source.label)
-				sheet.nofav = hs.nofav
-				source.sheet = container(sheet, self.ctx)
-				source.sheet.words = merge(self.words or {}, source.words or {})
+			if not source.inline then
+				source.inline = container(self.hs, self.ctx, self)
+				source.inline.words, source.inline.prefix, source.inline.gallery = self.words, self.prefix, self.gallery
+				source.inline.isSection = false
 			end
-			return source.sheet
+			return source.inline
 		end
 		local option = opts.Option
 		local group = container(self.hs, self.ctx, self, function()
@@ -7602,6 +7844,16 @@ UI.kicia = (function()
 		end
 		return table.unpack(out)
 	end
+	-- the character on a stage, for pages that paint it
+	function Grid:AddPreview(opts)
+		local col = columnFor(opts.Side, self.columns)
+		return UI.preview(self.tab, self.sub, col == "full" and 1 or col, {
+			Name = opts.Title or "Preview",
+			Height = opts.Height,
+			Waiting = opts.Waiting,
+			Callback = opts.Callback,
+		})
+	end
 
 	local Page = {}
 	Page.__index = Page
@@ -7725,6 +7977,10 @@ UI.kicia = (function()
 	function Menu:AddTab(opts) return setmetatable({ name = tostring(opts.Label) }, Category) end
 	function Menu:Dialog(opts, build) dialog(opts and opts.Title or "Dialog", build) end
 	function Menu:GetConfig() return store end
+	-- something that lives outside the store but belongs in every config
+	function Menu:AddPersistence(key, save, load)
+		K.persist[tostring(key)] = { save = save, load = load }
+	end
 	function Menu:GetPersistence() return persistence end
 	function Menu:GetStateData() return stateData end
 	function Menu:GetColorAnimation() return colorAnim end
@@ -18385,17 +18641,23 @@ do
 				local v122 = getthreadidentity()
 				setthreadidentity(8)
 
-				for _, v123 in v120, nil, nil do
+				-- our handlers run protected: an error in one of them must never
+				-- reach the game's replication loop, or the game stops listening
+				-- to the remote ("did you forget to implement OnClientEvent?")
+				for _, v123 in table.clone(v120), nil, nil do
 					if v123.Enabled and v123.Handler then
-						v123.Handler(tbl18)
-						if not tbl18.Block then
-							continue
+						local ok, err = pcall(v123.Handler, tbl18)
+						if not ok then
+							err = tostring(err)
+							if err ~= arg._lastError then
+								arg._lastError = err
+								warn("[Salad] replicate handler (" .. tostring(v121) .. "): " .. err)
+							end
 						end
-					else
-						continue
+						if tbl18.Block then
+							break
+						end
 					end
-
-					break
 				end
 
 				setthreadidentity(v122)
@@ -39458,6 +39720,17 @@ do
 			* CFrame.Angles(-0.26179938779914941, 0, 0)
 			* CFrame.new(0, 0, 1)
 
+		-- a picture of an item needs only its parts: clouds outside Terrain
+		-- warn on every render, scripts and sounds have no business there
+		local function forPreview(clone)
+			for _, d in clone:GetDescendants() do
+				if d:IsA("Clouds") or d:IsA("Sky") or d:IsA("Atmosphere") or d:IsA("LuaSourceContainer") or d:IsA("Sound") then
+					d:Destroy()
+				end
+			end
+			return clone
+		end
+
 		local function fn43(arg, arg2)
 			return function(arg3, arg4)
 				arg4.HideImage()
@@ -39472,7 +39745,7 @@ do
 				camera.CFrame = cFrame
 				camera.Parent = viewportFrame
 				viewportFrame.CurrentCamera = camera
-				local clone = arg:Clone()
+				local clone = forPreview(arg:Clone())
 				clone:PivotTo(CFrame.identity)
 				v116.applyWrap(v116.recordOriginalProperties(clone), arg2)
 				clone.Parent = viewportFrame
@@ -39497,7 +39770,7 @@ do
 				camera.FieldOfView = 25
 				camera.Parent = viewportFrame
 				viewportFrame.CurrentCamera = camera
-				local clone = v121:Clone()
+				local clone = forPreview(v121:Clone())
 
 				if clone:IsA("Model") then
 					local primary = clone:FindFirstChild("Primary")
@@ -40099,24 +40372,26 @@ do
 	local function construct()
 		local I = tbl17.aE()
 		tbl17.hN()
-		local function l(W, N)
-			if W.Ok then
+		local function failed(result, what)
+			if result.Ok then
 				return false
 			end
-			I.Notifications.get():Notify({ { Text = N .. " failed: " }, { Text = tostring(W.Error.Detail) } })
+			I.Notifications.get():Notify({ { Text = what .. " failed: " }, { Text = tostring(result.Error.Detail) } })
 			return true
 		end
+		-- a preset name that is also a fine file name
+		local function clean(name)
+			name = tostring(name or ""):gsub("[^%w%-_ ]", ""):gsub("^%s+", ""):gsub("%s+$", "")
+			return name
+		end
 		return function(W, N)
-			local P, a, e, c =
-				N:AddSection({ Title = "Library", Side = "left" }),
-				N:AddSection({ Title = "Transfer", Side = "right" }),
-				N:AddSection({ Title = "Automation", Side = "right" }),
-				W.CosmeticsConfig
-			local W, N, E, p =
-				P:AddTextBox({ Label = "Cosmetic Preset Name" }),
-				P:AddButton({ Label = "Create Cosmetic Preset" }),
+			local P, a, c =
+				N:AddSection({ Title = "Library", Side = "left" }), N:AddSection({ Title = "Transfer", Side = "right" }), W.CosmeticsConfig
+			local name, create, empty, list =
+				P:AddTextBox({ Label = "Cosmetic Preset Name", Placeholder = "my skins" }),
+				P:AddButton({ Label = "Save Current Skins as Preset" }),
 				P:AddLabel({
-					Label = "No Cosmetic Presets yet. Enter a name to create one.",
+					Label = "No presets yet. Name one and save your current skins into it.",
 					TextColor = Color3.fromRGB(255, 190, 90),
 				}),
 				P:AddList({
@@ -40128,20 +40403,52 @@ do
 						c:SetPresetName(T)
 					end,
 				})
+			local function refresh()
+				local names = c:GetAllStateConfigs()
+				table.sort(names)
+				list:SetOptions(names)
+				list:Set(c:GetState().PresetName, true)
+				empty:SetVisible(#names == 0)
+			end
 			P:AddButton({
 				Label = "Load Selected Cosmetic Preset",
 				Confirm = true,
 				OnClick = function()
-					l(c:LoadStateConfig(), "Loading cosmetic preset")
+					if not failed(c:LoadStateConfig(), "Loading cosmetic preset") then
+						I.Notifications.get():Notify("Preset loaded")
+					end
 				end,
 			})
 			P:AddButton({
 				Label = "Save to Selected Cosmetic Preset",
 				Confirm = true,
 				OnClick = function()
-					l(c:SaveStateConfig(), "Saving cosmetic preset")
+					if not failed(c:SaveStateConfig(), "Saving cosmetic preset") then
+						I.Notifications.get():Notify("Preset saved")
+					end
 				end,
 			})
+			P:AddButton({
+				Label = "Delete Selected Cosmetic Preset",
+				Confirm = true,
+				OnClick = function()
+					failed(c:DeleteCurrentPreset(), "Deleting cosmetic preset")
+					refresh()
+				end,
+			})
+			create:OnClick(function()
+				local n = clean(name.Value)
+				if #n == 0 then
+					I.Notifications.get():Notify("Name the preset first")
+					return
+				end
+				if not failed(c:SaveStateConfigAs(n), "Saving cosmetic preset") then
+					c:SetPresetName(n)
+					name:Set("", true)
+					I.Notifications.get():Notify("Saved preset " .. n)
+				end
+				refresh()
+			end)
 			a:AddButton({
 				Label = "Export to Clipboard",
 				OnClick = function()
@@ -40150,79 +40457,22 @@ do
 						setclipboard(T.Value)
 						I.Notifications.get():Notify("Copied your current cosmetics to the clipboard")
 					else
-						l(T, "Exporting cosmetics")
+						failed(T, "Exporting cosmetics")
 					end
 				end,
 			})
-			local I = a:AddTextBox({ Label = "Import (paste cosmetics)", FocusLostOnly = true })
+			local paste = a:AddTextBox({ Label = "Import (paste cosmetics)", FocusLostOnly = true })
 			a:AddButton({
 				Label = "Import Cosmetics",
 				Confirm = true,
 				OnClick = function()
-					local a = I.Value
-					if a ~= "" then
-						l(c:LoadStateFromJson(a), "Importing cosmetics")
+					local text = paste.Value
+					if text ~= "" and not failed(c:LoadStateFromJson(text), "Importing cosmetics") then
+						I.Notifications.get():Notify("Cosmetics imported")
 					end
 				end,
 			})
-			local function I()
-				return c:GetAllStateConfigs()
-			end
-			local function a(T, t)
-				return e:AddDropdown({
-					Label = T,
-					Options = I(),
-					GetOptions = I,
-					Search = true,
-					CloseOnSelect = true,
-					OnChanged = function(T)
-						t(T)
-					end,
-				})
-			end
-			local T, t, x, S =
-				e:AddToggle({
-					Label = "Auto Load Cosmetic Preset",
-					OnChanged = function(J)
-						c:SetAutoLoadEnabled(J)
-					end,
-				}), a("Cosmetic Preset to Auto Load", function(J)
-					c:SetAutoLoadPresetName(J)
-				end), e:AddToggle({
-					Label = "Auto Save Cosmetic Preset",
-					OnChanged = function(e)
-						c:SetAutoSaveEnabled(e)
-					end,
-				}), a("Cosmetic Preset to Auto Save", function(a)
-					c:SetAutoSavePresetName(a)
-				end)
-			local function a()
-				local e, J = c:GetState(), I()
-				p:SetOptions(J)
-				p:Set(e.PresetName, true)
-				E:SetVisible(#J == 0)
-				T:Set(e.AutoLoad, true)
-				t:Set(e.AutoLoadPresetName, true)
-				x:Set(e.AutoSave, true)
-				S:Set(e.AutoSavePresetName, true)
-			end
-			P:AddButton({
-				Label = "Delete Selected Cosmetic Preset",
-				Confirm = true,
-				OnClick = function()
-					l(c:DeleteCurrentPreset(), "Deleting cosmetic preset")
-					a()
-				end,
-			})
-			N:OnClick(function()
-				local I = W.Value:gsub("%s+", "")
-				if #I == 0 then
-					return
-				end
-				l(c:CreateDefaultPreset(I), "Creating cosmetic preset")
-				a()
-			end)
-			a()
+			refresh()
 		end
 	end
 
@@ -40311,6 +40561,7 @@ do
 		local I = tbl17.a8()
 		tbl17.aE()
 		return function(l)
+			local grid = l
 			local W = l:AddSection({ Title = "Character Appearance", Side = "right" })
 			l = W:AddToggle({ Label = "Enable Character Chams", Config = { "Chams", "Character", "Enabled" } })
 			W:AddColor({
@@ -40331,6 +40582,68 @@ do
 				},
 			})
 			N:AddToggle({ Label = "Strip Character Chams Textures", Config = { "Chams", "Character", "StripTextures" } })
+
+			-- you on a stage, wearing the chams as they are set right now
+			local preview = grid:AddPreview({ Title = "Preview", Side = "right", Height = 300 })
+			local state = { model = nil, key = nil, original = {}, hidden = {} }
+			local function paint(model, c)
+				if model ~= state.model then
+					state.model, state.original, state.hidden = model, {}, {}
+				end
+				local original, hidden = state.original, state.hidden
+				-- what was stepped out for "strip textures" comes back first
+				for inst, parent in pairs(hidden) do
+					pcall(function() inst.Parent = parent end)
+				end
+				table.clear(hidden)
+				local on = c.Enabled == true
+				local strip = on and c.StripTextures == true
+				local material = on and c.Material ~= "Original" and I.Map[c.Material] or nil
+				for _, d in ipairs(model:GetDescendants()) do
+					if d:IsA("BasePart") then
+						local o = original[d]
+						if not o then
+							o = { Material = d.Material, Color = d.Color, Transparency = d.Transparency }
+							if d:IsA("MeshPart") then o.TextureID = d.TextureID end
+							original[d] = o
+						end
+						-- the root and anything hidden on the real body stay hidden
+						if o.Transparency < 1 then
+							d.Material = material or o.Material
+							d.Color = on and typeof(c.Color) == "Color3" and c.Color or o.Color
+							d.Transparency = on and math.clamp(tonumber(c.Transparency) or 0, 0, 0.95) or o.Transparency
+							if o.TextureID ~= nil then d.TextureID = strip and "" or o.TextureID end
+						end
+					elseif d:IsA("Decal") or d:IsA("Texture") then
+						local o = original[d]
+						if not o then
+							o = { Transparency = d.Transparency }
+							original[d] = o
+						end
+						d.Transparency = strip and 1 or o.Transparency
+					elseif strip and (d:IsA("SurfaceAppearance") or d:IsA("Clothing") or d:IsA("ShirtGraphic")) then
+						hidden[d] = d.Parent
+					end
+				end
+				for inst in pairs(hidden) do
+					inst.Parent = nil
+				end
+			end
+			preview:onrender(function()
+				local model = preview.model()
+				if model == nil or model.Parent == nil then
+					return
+				end
+				local c = W:GetConfig():Get({ "Chams", "Character" }) or {}
+				local key = table.concat({
+					tostring(c.Enabled), tostring(c.Material), tostring(c.Color), tostring(c.Transparency), tostring(c.StripTextures),
+				}, "|")
+				if model == state.model and key == state.key then
+					return
+				end
+				state.key = key
+				paint(model, c)
+			end)
 		end
 	end
 
@@ -42050,6 +42363,21 @@ do
 				end,
 			})
 			e:Add(t)
+			-- the skin choices are saved with every menu config and restored
+			-- after the rest of it
+			local cosmeticsConfig = l.CosmeticsConfig
+			t:AddPersistence("cosmetics", function()
+				local r = cosmeticsConfig:ExportStateToJson()
+				return r.Ok and r.Value or nil
+			end, function(json)
+				if type(json) ~= "string" or json == "" then
+					return
+				end
+				local r = cosmeticsConfig:LoadStateFromJson(json)
+				if not r.Ok then
+					warn("[Salad] skins in config: " .. tostring(r.Error and r.Error.Detail))
+				end
+			end)
 			local I = l.PlayerIdentities
 			t:SetWatermarkUsername(I:GetPresented(T))
 			e:Connect(I.IdentityChanged, function(W)
