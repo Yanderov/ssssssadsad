@@ -1,0 +1,1 @@
+{"FileType":"TGMacro Project","Version":"2.92 Build:0","Macros":[{"Name":"wallhop","Trigger":{"KeyPressMethod":0,"KeyboardKey":221,"MasterKey":0,"TriggerType":1},"Actions":[{"ActionType":0,"MousePositioning":0,"PixelPosition":{"x":1240,"y":610}},{"ActionType":3,"WaitFor":20},{"ActionType":0,"MousePositioning":0,"PixelPosition":{"x":960,"y":610}}]}]}
